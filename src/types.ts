@@ -4,6 +4,7 @@ export type Editor = "gutenberg" | "elementor" | "generatepress" | "divi";
 export type SiteStatus =
   | "stopped"
   | "starting"
+  | "provisioning"
   | "running"
   | "stopping"
   | "error"
@@ -25,6 +26,7 @@ export interface Site {
   premiumZipPath?: string | null;
   createdAt: string;
   lastError?: string | null;
+  provisioned?: boolean;
 }
 
 export interface CreateSiteRequest {
@@ -47,4 +49,12 @@ export interface HostsInfo {
   platform: string;
   note: string;
   exampleEntry: string;
+}
+
+export interface ProvisionProgress {
+  siteId: string;
+  step: string;
+  message: string;
+  done: boolean;
+  error?: string | null;
 }

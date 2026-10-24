@@ -17,6 +17,16 @@ Al crear un sitio, la app sustituye:
 - `{{DOMAIN}}` — p. ej. `optimizador.local`
 - `{{HTTP_PORT}}` / `{{MYSQL_PORT}}` — puertos locales únicos
 
+## Provisión (automática)
+
+La app, tras `docker compose up -d`, ejecuta WP-CLI vía `docker compose run --rm wpcli …`:
+
+1. `wp db check` (espera MySQL)
+2. `wp core install --url=http://{{DOMAIN}} …`
+3. Plataforma (p. ej. WooCommerce) y editor (Elementor / GeneratePress / Divi desde ZIP)
+
+`PROVISION.md` en cada sitio documenta lo aplicado; ya no es el único camino (antes era manual).
+
 ## Premium
 
 Coloca ZIPs legítimos del usuario en `premium/`. La app **nunca** piratea ni redistribuye plugins/temas de pago.

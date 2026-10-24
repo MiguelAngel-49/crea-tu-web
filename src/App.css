@@ -334,6 +334,25 @@ code,
   font-size: 0.88rem;
 }
 
+.site-progress,
+.wizard-progress {
+  margin: 0;
+  padding: 0.55rem 0.7rem;
+  border-radius: 0.55rem;
+  background: #e8f0ff;
+  color: #274b8a;
+  font-size: 0.88rem;
+}
+
+.wizard-progress {
+  margin-top: 0.85rem;
+}
+
+.status-provisioning {
+  background: #e8f0ff;
+  color: #274b8a;
+}
+
 .site-actions {
   display: flex;
   flex-wrap: wrap;

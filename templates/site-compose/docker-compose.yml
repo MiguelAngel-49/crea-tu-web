@@ -39,7 +39,7 @@ services:
   db:
     image: mysql:8.4
     container_name: ctw-{{SITE_SLUG}}-mysql
-    command: --default-authentication-plugin=mysql_native_password --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     environment:
       MYSQL_DATABASE: wordpress
       MYSQL_USER: wordpress
@@ -53,15 +53,16 @@ services:
       test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-prootpass"]
       interval: 5s
       timeout: 5s
-      retries: 20
+      retries: 30
+      start_period: 15s
     restart: unless-stopped
     networks:
       - ctw
 
+  # Solo se usa con `docker compose run --rm wpcli …` (no queda en marcha).
   wpcli:
     image: wordpress:cli-php8.2
     container_name: ctw-{{SITE_SLUG}}-wpcli
-    user: "33:33"
     environment:
       WORDPRESS_DB_HOST: db
       WORDPRESS_DB_USER: wordpress
@@ -77,9 +78,9 @@ services:
         condition: service_started
     networks:
       - ctw
-    profiles:
-      - tools
-    entrypoint: ["wp", "--allow-root"]
+    user: "33:33"
+    entrypoint: ["wp"]
+    command: ["--info"]
 
 volumes:
   wordpress:

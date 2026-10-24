@@ -3,7 +3,7 @@
 Aplicación de **escritorio** (Tauri 2) para crear y gestionar sitios **WordPress** 100 % en local, al estilo Local WP.
 
 - UI: React + Vite + TypeScript (español)
-- Orquestación: Rust → CLI de Docker
+- Orquestación: Rust → CLI de Docker + **WP-CLI**
 - Runtime por sitio: Docker Compose (Nginx, PHP-FPM, **MySQL**, WP-CLI)
 - Dominios locales con sufijo **`.local`** (ej. `optimizador.local`)
 - Primer empaquetado prioritario: **Windows 11**
@@ -14,19 +14,19 @@ Aplicación de **escritorio** (Tauri 2) para crear y gestionar sitios **WordPres
 
 | Componente | Notas |
 | --- | --- |
-| **Docker Desktop** (Windows 11) o Docker Engine + Compose | Obligatorio para arrancar sitios |
+| **Docker Desktop** (Windows 11) o Docker Engine + Compose | Obligatorio para provisionar y arrancar sitios |
 | Node.js 20+ | Desarrollo frontend |
 | Rust (stable) | Backend Tauri |
 | WebView2 | Lo incluye/gestiona el instalador en Windows |
 
-Sin Docker, la app arranca igual y muestra un error claro en español; no se pueden arrancar contenedores.
+Sin Docker, la app arranca igual, crea la carpeta del sitio y muestra un error claro en español; la provisión queda pendiente hasta que Docker esté listo.
 
 ## Estructura
 
 ```
 crea-tu-web/
   src/                 # UI React (lista de sitios + asistente)
-  src-tauri/           # Rust: Docker, hosts, estado de sitios
+  src-tauri/           # Rust: Docker, WP-CLI, hosts, estado
   templates/
     site-compose/      # docker-compose.yml + nginx + carpeta premium/
   docs/                # Notas del repositorio
@@ -38,7 +38,7 @@ Datos de la app en disco:
 - macOS: `~/Library/Application Support/crea-tu-web/`
 - Linux: `~/.local/share/crea-tu-web/`
 
-Cada sitio vive en `…/sites/<slug>/` con su `docker-compose.yml` y `.env`.
+Cada sitio vive en `…/sites/<slug>/` con su `docker-compose.yml`, `.env` y `PROVISION.md` (registro de lo ejecutado).
 
 ## Desarrollo
 
@@ -59,23 +59,31 @@ Build / instalador Windows:
 npm run tauri build
 ```
 
+## Flujo al crear un sitio
+
+1. Validar nombre + dominio `*.local`, plataforma y editor.
+2. Copiar plantilla Compose, escribir `.env`, copiar ZIP premium si aplica.
+3. Intentar entrada en el archivo **hosts** (UAC en Windows 11).
+4. `docker compose up -d`.
+5. WP-CLI: esperar MySQL → `wp core install` (`http://nombre.local`) → WooCommerce / Elementor / GeneratePress / Divi (ZIP) según elección.
+6. La UI muestra el progreso (`provision-progress`) y el estado «Provisionando…».
+
+Si falla a mitad, el sitio queda en la lista con «Provisionar» para reintentar.
+
 ## MVP: qué hace y qué no
 
-### Funciona en este esqueleto
+### Funciona
 
-- Listar sitios guardados en el estado local
-- Asistente de creación: nombre, URL `.local`, plataforma (WordPress | WooCommerce), editor (Gutenberg | Elementor | GeneratePress | Divi + ZIP)
-- Generar carpeta del sitio desde `templates/site-compose` (Compose MySQL + Nginx + WP + WP-CLI)
-- Arrancar / parar (`docker compose up -d` / `stop`) con mensajes en español si Docker falta
-- Abrir sitio y WP Admin en el navegador (URL por puerto local)
-- Abstracción de archivo **hosts** (ruta Windows documentada; escritura con error UAC claro)
-- Eliminar sitio (compose down + borrar carpeta + quitar hosts si hay permiso)
+- Listar sitios y asistente de creación (WordPress | WooCommerce × Gutenberg | Elementor | GeneratePress | Divi+ZIP)
+- **Provisión automática WP-CLI** al crear (y reintento con «Provisionar» / Arrancar si falta)
+- Arrancar / parar Compose; abrir sitio y WP Admin (`http://dominio.local`)
+- Errores en español si Docker falta o WP-CLI falla
+- Helper **hosts** (ruta Windows documentada; escritura con aviso UAC)
+- Eliminar sitio (compose down + carpeta + hosts)
 
 ### Aún stub / siguiente iteración
 
-- Instalación automática WP-CLI (core install, WooCommerce, Elementor/GP) tras el primer arranque — hoy se documenta en `PROVISION.md` del sitio
-- HTTPS local con mkcert / CA de confianza
-- Abrir por hostname `.local` en lugar del puerto `127.0.0.1`
+- HTTPS local con mkcert / CA de confianza (hoy HTTP + `.local`)
 - Elevación UAC embebida para hosts en Windows
 - Backup / logs / Adminer en la UI
 - Empaquetado firmado y smoke test en Windows 11 real
@@ -84,13 +92,11 @@ npm run tauri build
 
 Ruta: `C:\Windows\System32\drivers\etc\hosts`
 
-Entrada de ejemplo:
-
 ```
 127.0.0.1    optimizador.local
 ```
 
-La escritura requiere elevación (UAC). Si falla, el sitio se crea igual y la UI muestra el aviso.
+WordPress se instala con `home`/`siteurl` = `http://optimizador.local`. Sin la entrada hosts, el navegador no resolverá el dominio (hace falta UAC / ejecutar como administrador).
 
 ## Licencias
 

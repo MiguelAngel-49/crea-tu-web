@@ -4,6 +4,7 @@ import type { CreateSiteRequest, Editor, Platform } from "../types";
 interface Props {
   open: boolean;
   busy: boolean;
+  progressMessage?: string | null;
   onClose: () => void;
   onSubmit: (request: CreateSiteRequest) => Promise<void>;
 }
@@ -53,7 +54,13 @@ const EDITORS: {
   },
 ];
 
-export function CreateSiteWizard({ open, busy, onClose, onSubmit }: Props) {
+export function CreateSiteWizard({
+  open,
+  busy,
+  progressMessage,
+  onClose,
+  onSubmit,
+}: Props) {
   const [step, setStep] = useState(0);
   const [name, setName] = useState("");
   const [domainLabel, setDomainLabel] = useState("");
@@ -294,10 +301,16 @@ export function CreateSiteWizard({ open, busy, onClose, onSubmit }: Props) {
               disabled={busy}
               onClick={handleFinish}
             >
-              {busy ? "Creando…" : "Crear sitio"}
+              {busy ? "Creando y provisionando…" : "Crear sitio"}
             </button>
           )}
         </footer>
+
+        {busy && progressMessage ? (
+          <p className="wizard-progress" role="status">
+            {progressMessage}
+          </p>
+        ) : null}
       </div>
     </div>
   );

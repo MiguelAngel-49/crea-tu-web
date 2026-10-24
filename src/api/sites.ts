@@ -1,9 +1,11 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import type {
   CreateSiteRequest,
   DockerStatus,
   HostsInfo,
+  ProvisionProgress,
   Site,
 } from "../types";
 
@@ -17,6 +19,10 @@ export async function listSites(): Promise<Site[]> {
 
 export async function createSite(request: CreateSiteRequest): Promise<Site> {
   return invoke("create_site", { request });
+}
+
+export async function provisionSite(id: string): Promise<Site> {
+  return invoke("provision_site", { id });
 }
 
 export async function startSite(id: string): Promise<Site> {
@@ -54,6 +60,14 @@ export async function openSiteInBrowser(id: string): Promise<void> {
 export async function openWpAdmin(id: string): Promise<void> {
   const url = await getSiteAdminUrl(id);
   await openUrl(url);
+}
+
+export async function onProvisionProgress(
+  handler: (progress: ProvisionProgress) => void,
+): Promise<UnlistenFn> {
+  return listen<ProvisionProgress>("provision-progress", (event) => {
+    handler(event.payload);
+  });
 }
 
 /** Mensaje amigable si invoke falla fuera de Tauri (p. ej. solo Vite). */

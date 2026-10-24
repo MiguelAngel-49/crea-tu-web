@@ -4,8 +4,10 @@ import {
   createSite,
   deleteSite,
   listSites,
+  onProvisionProgress,
   openSiteInBrowser,
   openWpAdmin,
+  provisionSite,
   startSite,
   stopSite,
   toSpanishError,
@@ -13,7 +15,12 @@ import {
 import { CreateSiteWizard } from "./components/CreateSiteWizard";
 import { DockerBanner } from "./components/DockerBanner";
 import { SiteCard } from "./components/SiteCard";
-import type { CreateSiteRequest, DockerStatus, Site } from "./types";
+import type {
+  CreateSiteRequest,
+  DockerStatus,
+  ProvisionProgress,
+  Site,
+} from "./types";
 import "./App.css";
 
 function App() {
@@ -25,6 +32,10 @@ function App() {
   const [wizardOpen, setWizardOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [progressBySite, setProgressBySite] = useState<
+    Record<string, string>
+  >({});
+  const [wizardProgress, setWizardProgress] = useState<string | null>(null);
 
   const refreshDocker = useCallback(async () => {
     setDockerLoading(true);
@@ -45,7 +56,6 @@ function App() {
     setListLoading(true);
     try {
       setSites(await listSites());
-      setError(null);
     } catch (e) {
       setError(toSpanishError(e));
     } finally {
@@ -57,6 +67,32 @@ function App() {
     void refreshDocker();
     void refreshSites();
   }, [refreshDocker, refreshSites]);
+
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    void onProvisionProgress((progress: ProvisionProgress) => {
+      setProgressBySite((prev) => ({
+        ...prev,
+        [progress.siteId]: progress.message,
+      }));
+      setWizardProgress(progress.message);
+      if (progress.done) {
+        if (progress.error) {
+          setError(progress.error);
+        }
+        void refreshSites();
+      }
+    })
+      .then((fn) => {
+        unlisten = fn;
+      })
+      .catch(() => {
+        /* fuera de Tauri no hay eventos */
+      });
+    return () => {
+      unlisten?.();
+    };
+  }, [refreshSites]);
 
   const dockerOk = Boolean(docker?.available && docker?.composeAvailable);
 
@@ -71,21 +107,33 @@ function App() {
       await refreshSites();
     } finally {
       setBusyId(null);
+      setProgressBySite((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
     }
   }
 
   async function handleCreate(request: CreateSiteRequest) {
     setCreating(true);
     setError(null);
+    setWizardProgress("Preparando archivos del sitio…");
     try {
-      await createSite(request);
+      const site = await createSite(request);
       setWizardOpen(false);
+      setWizardProgress(null);
       await refreshSites();
+      if (site.lastError && !site.provisioned) {
+        setError(site.lastError);
+      }
     } catch (e) {
       setError(toSpanishError(e));
+      await refreshSites();
       throw e;
     } finally {
       setCreating(false);
+      setWizardProgress(null);
     }
   }
 
@@ -112,8 +160,8 @@ function App() {
           <div>
             <h1>Mis sitios</h1>
             <p className="subtitle">
-              Crea, arranca y abre WordPress en tu máquina con dominio{" "}
-              <code>.local</code>.
+              Crea, provisiona con WP-CLI y abre WordPress en{" "}
+              <code>*.local</code>.
             </p>
           </div>
           <button
@@ -152,8 +200,8 @@ function App() {
               <h2>Aún no hay sitios</h2>
               <p>
                 Crea el primero con un nombre y una URL{" "}
-                <code>tu-marca.local</code>, elige WordPress o WooCommerce y un
-                editor.
+                <code>tu-marca.local</code>. Al crear, la app arranca Docker e
+                instala WordPress con WP-CLI.
               </p>
               <button
                 type="button"
@@ -171,6 +219,7 @@ function App() {
                   site={site}
                   busy={busyId === site.id}
                   dockerOk={dockerOk}
+                  progressMessage={progressBySite[site.id] ?? null}
                   onStart={(id) =>
                     void withBusy(id, async () => {
                       await startSite(id);
@@ -189,6 +238,11 @@ function App() {
                   onAdmin={(id) =>
                     void withBusy(id, async () => {
                       await openWpAdmin(id);
+                    })
+                  }
+                  onProvision={(id) =>
+                    void withBusy(id, async () => {
+                      await provisionSite(id);
                     })
                   }
                   onDelete={(id) => {
@@ -215,6 +269,7 @@ function App() {
       <CreateSiteWizard
         open={wizardOpen}
         busy={creating}
+        progressMessage={wizardProgress}
         onClose={() => setWizardOpen(false)}
         onSubmit={handleCreate}
       />

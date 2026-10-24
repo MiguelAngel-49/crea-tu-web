@@ -27,6 +27,7 @@ pub enum Editor {
 pub enum SiteStatus {
     Stopped,
     Starting,
+    Provisioning,
     Running,
     Stopping,
     Error,
@@ -54,6 +55,19 @@ pub struct Site {
     pub premium_zip_path: Option<String>,
     pub created_at: DateTime<Utc>,
     pub last_error: Option<String>,
+    /// `true` cuando WP-CLI completó core install + plataforma/editor.
+    #[serde(default)]
+    pub provisioned: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProvisionProgress {
+    pub site_id: String,
+    pub step: String,
+    pub message: String,
+    pub done: bool,
+    pub error: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

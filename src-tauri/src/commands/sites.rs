@@ -1,5 +1,6 @@
 use crate::commands::docker::{self, compose_in_dir, site_is_running};
 use crate::commands::hosts;
+use crate::commands::provision;
 use crate::models::{
     AppStateFile, CreateSiteRequest, Editor, Platform, Site, SiteStatus,
 };
@@ -8,6 +9,7 @@ use chrono::Utc;
 use regex::Regex;
 use std::fs;
 use std::path::{Path, PathBuf};
+use tauri::AppHandle;
 use uuid::Uuid;
 
 fn load_state() -> Result<AppStateFile, String> {
@@ -33,6 +35,16 @@ fn save_state(state: &AppStateFile) -> Result<(), String> {
     let raw = serde_json::to_string_pretty(state)
         .map_err(|e| format!("No se pudo serializar el estado: {e}"))?;
     fs::write(&path, raw).map_err(|e| format!("No se pudo guardar el estado: {e}"))
+}
+
+fn update_site_in_state(site: &Site) -> Result<(), String> {
+    let mut state = load_state()?;
+    if let Some(existing) = state.sites.iter_mut().find(|s| s.id == site.id) {
+        *existing = site.clone();
+    } else {
+        state.sites.push(site.clone());
+    }
+    save_state(&state)
 }
 
 fn slugify(name: &str) -> String {
@@ -147,50 +159,62 @@ fn write_env_file(site: &Site) -> Result<(), String> {
 
 fn provision_notes(site: &Site) -> String {
     let mut notes = String::from("# Provisión Crea-tu-Web\n\n");
-    notes.push_str(&format!("Sitio: {}\nDominio: http://{}\n", site.name, site.domain));
-    notes.push_str(&format!("Plataforma: {:?}\nEditor: {:?}\n\n", site.platform, site.editor));
-    notes.push_str("Tras el primer `docker compose up -d`, usa WP-CLI en el contenedor `wpcli`:\n");
-    notes.push_str("```\ndocker compose run --rm wpcli wp core install \\\n");
+    notes.push_str(
+        "La app ejecuta esta provisión **automáticamente** al crear el sitio \
+         (o al pulsar «Provisionar» / arrancar si quedó pendiente).\n\n",
+    );
     notes.push_str(&format!(
-        "  --url=http://{} --title=\"{}\" \\\n  --admin_user={} --admin_password={} --admin_email=admin@{}\n```\n\n",
-        site.domain, site.name, site.admin_user, site.admin_password, site.domain
+        "- Sitio: **{}**\n- URL: `http://{}`\n- Admin: `{}` / (ver app)\n",
+        site.name, site.domain, site.admin_user
+    ));
+    notes.push_str(&format!(
+        "- Plataforma: {:?}\n- Editor: {:?}\n- Provisionado: {}\n\n",
+        site.platform, site.editor, site.provisioned
     ));
 
+    notes.push_str("## Pasos automáticos\n\n");
+    notes.push_str("1. `docker compose up -d`\n");
+    notes.push_str("2. Esperar MySQL (`wp db check`)\n");
+    notes.push_str("3. `wp core install --url=http://<dominio.local> …`\n");
     match site.platform {
         Platform::WooCommerce => {
-            notes.push_str("## WooCommerce\n");
-            notes.push_str("```\ndocker compose run --rm wpcli wp plugin install woocommerce --activate\n```\n\n");
+            notes.push_str("4. `wp plugin install woocommerce --activate`\n");
         }
-        Platform::WordPress => {}
+        Platform::WordPress => {
+            notes.push_str("4. (WordPress vanilla — sin plugin de tienda)\n");
+        }
     }
-
     match site.editor {
-        Editor::Gutenberg => {
-            notes.push_str("## Editor\nGutenberg (editor de bloques nativo); no hace falta instalar nada.\n");
-        }
+        Editor::Gutenberg => notes.push_str("5. Gutenberg nativo\n"),
         Editor::Elementor => {
-            notes.push_str("## Elementor (free)\n");
-            notes.push_str("```\ndocker compose run --rm wpcli wp plugin install elementor --activate\n```\n");
-            notes.push_str("Elementor Pro: aporta tu ZIP legítimo en la app (nunca se redistribuye).\n");
+            notes.push_str("5. `wp plugin install elementor --activate` (+ ZIP Pro si lo aportaste)\n")
         }
         Editor::GeneratePress => {
-            notes.push_str("## GeneratePress (free)\n");
-            notes.push_str("```\ndocker compose run --rm wpcli wp theme install generatepress --activate\n```\n");
-            notes.push_str("GP Premium: aporta tu ZIP legítimo.\n");
+            notes.push_str(
+                "5. `wp theme install generatepress --activate` (+ ZIP Premium si lo aportaste)\n",
+            )
         }
         Editor::Divi => {
-            notes.push_str("## Divi (premium)\n");
             notes.push_str(
-                "Divi requiere un ZIP legítimo del usuario. Colócalo en `premium/` del sitio \
-                 o indícalo en el asistente. La app nunca piratea ni redistribuye Divi.\n",
-            );
+                "5. Instalar Divi desde `/premium/<tu-zip>` (solo ZIP legítimo del usuario)\n",
+            )
         }
     }
 
+    notes.push_str("\n## Reintento manual\n\n");
+    notes.push_str("```bash\ncd <ruta-del-sitio>\ndocker compose up -d\n");
+    notes.push_str("docker compose run --rm wpcli db check\n");
+    notes.push_str(&format!(
+        "docker compose run --rm wpcli core install \\\n  --url=http://{} --title=\"{}\" \\\n  --admin_user={} --admin_password=*** --admin_email=admin@{} --skip-email\n```\n",
+        site.domain, site.name, site.admin_user, site.domain
+    ));
+
+    notes.push_str(
+        "\n> Premium: la app **nunca** descarga ni redistribuye Divi / Elementor Pro / GP Premium.\n",
+    );
     if let Some(zip) = &site.premium_zip_path {
         notes.push_str(&format!("\nZIP premium indicado: `{zip}`\n"));
     }
-
     notes
 }
 
@@ -198,11 +222,16 @@ fn provision_notes(site: &Site) -> String {
 pub fn list_sites() -> Result<Vec<Site>, String> {
     let mut state = load_state()?;
     for site in &mut state.sites {
+        if site.status == SiteStatus::Provisioning {
+            continue;
+        }
         if Path::new(&site.path).join("docker-compose.yml").exists() {
             match site_is_running(&site.path) {
                 Ok(true) => {
                     site.status = SiteStatus::Running;
-                    site.last_error = None;
+                    if site.provisioned {
+                        site.last_error = None;
+                    }
                 }
                 Ok(false) => {
                     if site.status != SiteStatus::Error {
@@ -210,7 +239,6 @@ pub fn list_sites() -> Result<Vec<Site>, String> {
                     }
                 }
                 Err(e) => {
-                    // Docker ausente: no marcamos error permanente; dejamos Unknown
                     site.status = SiteStatus::Unknown;
                     site.last_error = Some(e);
                 }
@@ -222,7 +250,7 @@ pub fn list_sites() -> Result<Vec<Site>, String> {
 }
 
 #[tauri::command]
-pub fn create_site(request: CreateSiteRequest) -> Result<Site, String> {
+pub fn create_site(app: AppHandle, request: CreateSiteRequest) -> Result<Site, String> {
     let name = request.name.trim();
     if name.is_empty() {
         return Err("El nombre del sitio es obligatorio.".to_string());
@@ -235,8 +263,12 @@ pub fn create_site(request: CreateSiteRequest) -> Result<Site, String> {
     let domain = format!("{label}.local");
     let slug = slugify(&label);
 
-    // Premium ZIP obligatorio para Divi; opcional para otros
-    if request.editor == Editor::Divi && request.premium_zip_path.as_ref().map(|s| s.is_empty()).unwrap_or(true)
+    if request.editor == Editor::Divi
+        && request
+            .premium_zip_path
+            .as_ref()
+            .map(|s| s.is_empty())
+            .unwrap_or(true)
     {
         return Err(
             "Divi es un producto premium: debes indicar la ruta a tu ZIP legítimo. \
@@ -253,7 +285,11 @@ pub fn create_site(request: CreateSiteRequest) -> Result<Site, String> {
     }
 
     let mut state = load_state()?;
-    if state.sites.iter().any(|s| s.domain == domain || s.slug == slug) {
+    if state
+        .sites
+        .iter()
+        .any(|s| s.domain == domain || s.slug == slug)
+    {
         return Err(format!(
             "Ya existe un sitio con el dominio «{domain}» o el identificador «{slug}»."
         ));
@@ -271,7 +307,7 @@ pub fn create_site(request: CreateSiteRequest) -> Result<Site, String> {
     copy_dir_recursive(&templates, &site_path)?;
 
     let admin_password = format!("ctw-{}", &Uuid::new_v4().to_string()[..8]);
-    let site = Site {
+    let mut site = Site {
         id: Uuid::new_v4(),
         name: name.to_string(),
         slug: slug.clone(),
@@ -284,20 +320,15 @@ pub fn create_site(request: CreateSiteRequest) -> Result<Site, String> {
         status: SiteStatus::Stopped,
         admin_user: "admin".to_string(),
         admin_password,
-        premium_zip_path: request
-            .premium_zip_path
-            .filter(|p| !p.trim().is_empty()),
+        premium_zip_path: request.premium_zip_path.filter(|p| !p.trim().is_empty()),
         created_at: Utc::now(),
         last_error: None,
+        provisioned: false,
     };
 
-    // Sustituir placeholders en compose, nginx, etc.
     apply_placeholders_in_tree(&site_path, &site)?;
     write_env_file(&site)?;
-    fs::write(site_path.join("PROVISION.md"), provision_notes(&site))
-        .map_err(|e| format!("No se pudo escribir PROVISION.md: {e}"))?;
 
-    // Copiar ZIP premium si se indicó
     if let Some(zip) = &site.premium_zip_path {
         let premium_dir = site_path.join("premium");
         fs::create_dir_all(&premium_dir).map_err(|e| e.to_string())?;
@@ -308,11 +339,10 @@ pub fn create_site(request: CreateSiteRequest) -> Result<Site, String> {
             .map_err(|e| format!("No se pudo copiar el ZIP premium: {e}"))?;
     }
 
-    // Intentar entrada hosts (puede fallar sin elevación; no abortamos la creación)
-    let mut site = site;
+    let mut hosts_warning: Option<String> = None;
     if let Err(e) = hosts::add_hosts_entry(domain.clone()) {
-        site.last_error = Some(format!(
-            "Sitio creado, pero no se pudo actualizar hosts: {e}"
+        hosts_warning = Some(format!(
+            "No se pudo actualizar hosts (puede hacer falta UAC en Windows 11): {e}"
         ));
     }
 
@@ -320,11 +350,64 @@ pub fn create_site(request: CreateSiteRequest) -> Result<Site, String> {
     state.next_mysql_port = state.next_mysql_port.saturating_add(1);
     state.sites.push(site.clone());
     save_state(&state)?;
-    Ok(site)
+
+    // Provisión automática si Docker está disponible
+    match docker::ensure_docker() {
+        Ok(()) => {
+            site.status = SiteStatus::Provisioning;
+            let _ = update_site_in_state(&site);
+
+            match provision::provision_site(Some(&app), &site) {
+                Ok(()) => {
+                    site.status = SiteStatus::Running;
+                    site.provisioned = true;
+                    site.last_error = hosts_warning;
+                    fs::write(site_path.join("PROVISION.md"), provision_notes(&site))
+                        .map_err(|e| format!("No se pudo escribir PROVISION.md: {e}"))?;
+                    update_site_in_state(&site)?;
+                    Ok(site)
+                }
+                Err(e) => {
+                    let msg = if let Some(w) = hosts_warning {
+                        format!(
+                            "Provisión WP-CLI falló: {e} — {w}. Usa «Provisionar» para reintentar."
+                        )
+                    } else {
+                        format!(
+                            "Provisión WP-CLI falló: {e}. Usa «Provisionar» para reintentar."
+                        )
+                    };
+                    site.status = SiteStatus::Error;
+                    site.provisioned = false;
+                    site.last_error = Some(msg);
+                    let _ = fs::write(site_path.join("PROVISION.md"), provision_notes(&site));
+                    update_site_in_state(&site)?;
+                    // Devolvemos el sitio para que aparezca en la lista y se pueda reintentar.
+                    Ok(site)
+                }
+            }
+        }
+        Err(docker_err) => {
+            site.status = SiteStatus::Stopped;
+            site.provisioned = false;
+            let mut msg = format!(
+                "Sitio creado en disco, pero no se pudo provisionar: {docker_err}. \
+                 Arranca Docker Desktop y usa «Provisionar»."
+            );
+            if let Some(w) = hosts_warning {
+                msg = format!("{msg} {w}");
+            }
+            site.last_error = Some(msg.clone());
+            let _ = fs::write(site_path.join("PROVISION.md"), provision_notes(&site));
+            update_site_in_state(&site)?;
+            // Devolvemos Ok con aviso en last_error: el sitio existe; UI muestra el mensaje
+            Ok(site)
+        }
+    }
 }
 
 #[tauri::command]
-pub fn start_site(id: String) -> Result<Site, String> {
+pub fn provision_site(app: AppHandle, id: String) -> Result<Site, String> {
     docker::ensure_docker()?;
     let uuid = Uuid::parse_str(&id).map_err(|_| "Identificador de sitio no válido.".to_string())?;
     let mut state = load_state()?;
@@ -333,6 +416,89 @@ pub fn start_site(id: String) -> Result<Site, String> {
         .iter_mut()
         .find(|s| s.id == uuid)
         .ok_or_else(|| "Sitio no encontrado.".to_string())?;
+
+    site.status = SiteStatus::Provisioning;
+    site.last_error = None;
+    let snapshot = site.clone();
+    save_state(&state)?;
+
+    match provision::provision_site(Some(&app), &snapshot) {
+        Ok(()) => {
+            let mut state = load_state()?;
+            let site = state
+                .sites
+                .iter_mut()
+                .find(|s| s.id == uuid)
+                .ok_or_else(|| "Sitio no encontrado.".to_string())?;
+            site.status = SiteStatus::Running;
+            site.provisioned = true;
+            site.last_error = None;
+            let result = site.clone();
+            let _ = fs::write(
+                Path::new(&result.path).join("PROVISION.md"),
+                provision_notes(&result),
+            );
+            save_state(&state)?;
+            Ok(result)
+        }
+        Err(e) => {
+            let mut state = load_state()?;
+            if let Some(site) = state.sites.iter_mut().find(|s| s.id == uuid) {
+                site.status = SiteStatus::Error;
+                site.provisioned = false;
+                site.last_error = Some(e.clone());
+                let _ = fs::write(
+                    Path::new(&site.path).join("PROVISION.md"),
+                    provision_notes(site),
+                );
+                let _ = save_state(&state);
+            }
+            Err(e)
+        }
+    }
+}
+
+#[tauri::command]
+pub fn start_site(app: AppHandle, id: String) -> Result<Site, String> {
+    docker::ensure_docker()?;
+    let uuid = Uuid::parse_str(&id).map_err(|_| "Identificador de sitio no válido.".to_string())?;
+    let mut state = load_state()?;
+    let site = state
+        .sites
+        .iter_mut()
+        .find(|s| s.id == uuid)
+        .ok_or_else(|| "Sitio no encontrado.".to_string())?;
+
+    if !site.provisioned {
+        site.status = SiteStatus::Provisioning;
+        let snapshot = site.clone();
+        save_state(&state)?;
+        return match provision::provision_site(Some(&app), &snapshot) {
+            Ok(()) => {
+                let mut state = load_state()?;
+                let site = state
+                    .sites
+                    .iter_mut()
+                    .find(|s| s.id == uuid)
+                    .ok_or_else(|| "Sitio no encontrado.".to_string())?;
+                site.status = SiteStatus::Running;
+                site.provisioned = true;
+                site.last_error = None;
+                let result = site.clone();
+                save_state(&state)?;
+                Ok(result)
+            }
+            Err(e) => {
+                let mut state = load_state()?;
+                if let Some(site) = state.sites.iter_mut().find(|s| s.id == uuid) {
+                    site.status = SiteStatus::Error;
+                    site.last_error = Some(e.clone());
+                    let _ = save_state(&state);
+                }
+                Err(e)
+            }
+        };
+    }
 
     site.status = SiteStatus::Starting;
     let path = site.path.clone();
@@ -394,7 +560,6 @@ pub fn delete_site(id: String, remove_volumes: bool) -> Result<(), String> {
         .ok_or_else(|| "Sitio no encontrado.".to_string())?;
     let site = state.sites.remove(idx);
 
-    // Intentar bajar contenedores si Docker está disponible
     if Path::new(&site.path).join("docker-compose.yml").exists() {
         let mut args = vec!["down"];
         if remove_volumes {
@@ -427,8 +592,8 @@ pub fn get_site_url(id: String) -> Result<String, String> {
         .iter()
         .find(|s| s.id == uuid)
         .ok_or_else(|| "Sitio no encontrado.".to_string())?;
-    // MVP: HTTP por puerto mapeado; HTTPS/mkcert llega más adelante
-    Ok(format!("http://127.0.0.1:{}", site.http_port))
+    // Misma URL que usa `wp core install` (requiere entrada hosts).
+    Ok(format!("http://{}", site.domain))
 }
 
 #[tauri::command]
@@ -447,7 +612,6 @@ pub fn get_data_paths() -> Result<serde_json::Value, String> {
     }))
 }
 
-/// Utilidad interna: genera una contraseña legible (expuesta solo si hace falta regenerar).
 #[allow(dead_code)]
 pub fn site_path_for_slug(slug: &str) -> Result<PathBuf, String> {
     Ok(sites_dir()?.join(slug))

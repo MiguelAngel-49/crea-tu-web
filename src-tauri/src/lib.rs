@@ -15,6 +15,7 @@ pub fn run() {
             hosts::remove_hosts_entry,
             sites::list_sites,
             sites::create_site,
+            sites::provision_site,
             sites::start_site,
             sites::stop_site,
             sites::delete_site,
