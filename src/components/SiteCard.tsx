@@ -56,7 +56,11 @@ export function SiteCard({
       <header className="site-card-head">
         <div>
           <h2>{site.name}</h2>
-          <p className="site-domain">{site.domain}</p>
+          <p className="site-domain">
+            {site.httpPort === 80
+              ? `http://${site.domain}`
+              : `http://${site.domain}:${site.httpPort}`}
+          </p>
         </div>
         <span className={`status status-${site.status}`}>
           {STATUS_LABEL[site.status]}

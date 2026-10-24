@@ -150,9 +150,11 @@ fn wait_for_wordpress_files(app: Option<&AppHandle>, site: &Site) -> Result<(), 
     ))
 }
 
-fn site_public_url(site: &Site) -> String {
-    // Esquema local actual: HTTP + dominio .local (hosts). HTTPS/mkcert llega después.
-    format!("http://{}", site.domain)
+fn sync_site_urls(site: &Site) -> Result<(), String> {
+    let url = site.public_url();
+    wpcli_run(&site.path, &["option", "update", "siteurl", &url])?;
+    wpcli_run(&site.path, &["option", "update", "home", &url])?;
+    Ok(())
 }
 
 fn ensure_core_installed(app: Option<&AppHandle>, site: &Site) -> Result<(), String> {
@@ -163,39 +165,37 @@ fn ensure_core_installed(app: Option<&AppHandle>, site: &Site) -> Result<(), Str
         "Comprobando instalación de WordPress…",
     );
 
-    match wpcli_run(&site.path, &["core", "is-installed"]) {
-        Ok(_) => {
-            emit_progress(
-                app,
-                site,
-                "core_install",
-                "WordPress ya estaba instalado; se reutiliza.",
-            );
-            return Ok(());
-        }
+    let url = site.public_url();
+    let already = match wpcli_run(&site.path, &["core", "is-installed"]) {
+        Ok(_) => true,
         Err(e) => {
             let lower = e.to_lowercase();
             if !(lower.contains("not installed") || lower.contains("does not seem to be installed"))
             {
-                // If check failed for other reasons, still try install
-                emit_progress(
-                    app,
-                    site,
-                    "core_install",
-                    "Instalando WordPress (core install)…",
-                );
-            } else {
-                emit_progress(
-                    app,
-                    site,
-                    "core_install",
-                    "Instalando WordPress (core install)…",
-                );
+                // Otros errores: intentamos instalar de todos modos
             }
+            false
         }
+    };
+
+    if already {
+        emit_progress(
+            app,
+            site,
+            "core_install",
+            &format!("WordPress ya instalado; sincronizando URL ({url})…"),
+        );
+        sync_site_urls(site)?;
+        return Ok(());
     }
 
-    let url = site_public_url(site);
+    emit_progress(
+        app,
+        site,
+        "core_install",
+        &format!("Instalando WordPress en {url}…"),
+    );
+
     let email = format!("admin@{}", site.domain);
     let title = site.name.as_str();
 
@@ -213,13 +213,7 @@ fn ensure_core_installed(app: Option<&AppHandle>, site: &Site) -> Result<(), Str
         ],
     )?;
 
-    // Asegurar siteurl/home por si el contenedor cambió algo
-    let _ = wpcli_run(
-        &site.path,
-        &["option", "update", "siteurl", &url],
-    );
-    let _ = wpcli_run(&site.path, &["option", "update", "home", &url]);
-
+    sync_site_urls(site)?;
     Ok(())
 }
 

@@ -19,7 +19,8 @@ services:
       - ctw
 
   wordpress:
-    image: wordpress:6.7-php8.2-fpm
+    # ≥ 6.8: Elementor (latest) exige WordPress 6.8+
+    image: wordpress:6.8-php8.2-fpm
     container_name: ctw-{{SITE_SLUG}}-wordpress
     environment:
       WORDPRESS_DB_HOST: db
@@ -59,7 +60,7 @@ services:
     networks:
       - ctw
 
-  # Solo se usa con `docker compose run --rm wpcli …` (no queda en marcha).
+  # Solo vía `docker compose run --rm wpcli …` (perfil tools: no arranca con up -d).
   wpcli:
     image: wordpress:cli-php8.2
     container_name: ctw-{{SITE_SLUG}}-wpcli
@@ -78,6 +79,8 @@ services:
         condition: service_started
     networks:
       - ctw
+    profiles:
+      - tools
     user: "33:33"
     entrypoint: ["wp"]
     command: ["--info"]

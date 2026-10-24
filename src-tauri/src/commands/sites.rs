@@ -163,9 +163,10 @@ fn provision_notes(site: &Site) -> String {
         "La app ejecuta esta provisión **automáticamente** al crear el sitio \
          (o al pulsar «Provisionar» / arrancar si quedó pendiente).\n\n",
     );
+    let public = site.public_url();
     notes.push_str(&format!(
-        "- Sitio: **{}**\n- URL: `http://{}`\n- Admin: `{}` / (ver app)\n",
-        site.name, site.domain, site.admin_user
+        "- Sitio: **{}**\n- URL: `{public}`\n- Admin: `{}` / (ver app)\n",
+        site.name, site.admin_user
     ));
     notes.push_str(&format!(
         "- Plataforma: {:?}\n- Editor: {:?}\n- Provisionado: {}\n\n",
@@ -175,7 +176,9 @@ fn provision_notes(site: &Site) -> String {
     notes.push_str("## Pasos automáticos\n\n");
     notes.push_str("1. `docker compose up -d`\n");
     notes.push_str("2. Esperar MySQL (`wp db check`)\n");
-    notes.push_str("3. `wp core install --url=http://<dominio.local> …`\n");
+    notes.push_str(&format!(
+        "3. `wp core install --url={public}` (incluye puerto HTTP mapeado si ≠ 80)\n"
+    ));
     match site.platform {
         Platform::WooCommerce => {
             notes.push_str("4. `wp plugin install woocommerce --activate`\n");
@@ -205,8 +208,8 @@ fn provision_notes(site: &Site) -> String {
     notes.push_str("```bash\ncd <ruta-del-sitio>\ndocker compose up -d\n");
     notes.push_str("docker compose run --rm wpcli db check\n");
     notes.push_str(&format!(
-        "docker compose run --rm wpcli core install \\\n  --url=http://{} --title=\"{}\" \\\n  --admin_user={} --admin_password=*** --admin_email=admin@{} --skip-email\n```\n",
-        site.domain, site.name, site.admin_user, site.domain
+        "docker compose run --rm wpcli core install \\\n  --url={public} --title=\"{}\" \\\n  --admin_user={} --admin_password=*** --admin_email=admin@{} --skip-email\n```\n",
+        site.name, site.admin_user, site.domain
     ));
 
     notes.push_str(
@@ -592,14 +595,20 @@ pub fn get_site_url(id: String) -> Result<String, String> {
         .iter()
         .find(|s| s.id == uuid)
         .ok_or_else(|| "Sitio no encontrado.".to_string())?;
-    // Misma URL que usa `wp core install` (requiere entrada hosts).
-    Ok(format!("http://{}", site.domain))
+    // Misma URL que `wp core install` / siteurl (hosts + puerto mapeado).
+    Ok(site.public_url())
 }
 
 #[tauri::command]
 pub fn get_site_admin_url(id: String) -> Result<String, String> {
-    let url = get_site_url(id)?;
-    Ok(format!("{url}/wp-admin"))
+    let uuid = Uuid::parse_str(&id).map_err(|_| "Identificador de sitio no válido.".to_string())?;
+    let state = load_state()?;
+    let site = state
+        .sites
+        .iter()
+        .find(|s| s.id == uuid)
+        .ok_or_else(|| "Sitio no encontrado.".to_string())?;
+    Ok(site.admin_url())
 }
 
 #[tauri::command]

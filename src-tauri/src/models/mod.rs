@@ -60,6 +60,23 @@ pub struct Site {
     pub provisioned: bool,
 }
 
+impl Site {
+    /// URL pública del sitio: `http://dominio.local` o `http://dominio.local:PUERTO`.
+    /// Incluye el puerto HTTP mapeado (p. ej. 8080) para que, con hosts escrito,
+    /// el navegador llegue a Nginx sin depender del puerto 80 del host (problemático en Windows).
+    pub fn public_url(&self) -> String {
+        if self.http_port == 80 {
+            format!("http://{}", self.domain)
+        } else {
+            format!("http://{}:{}", self.domain, self.http_port)
+        }
+    }
+
+    pub fn admin_url(&self) -> String {
+        format!("{}/wp-admin", self.public_url())
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProvisionProgress {
