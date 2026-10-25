@@ -192,7 +192,11 @@ fn provision_notes(site: &Site) -> String {
     match site.editor {
         Editor::Gutenberg => notes.push_str("5. Gutenberg nativo\n"),
         Editor::Elementor => {
-            notes.push_str("5. `wp plugin install elementor --activate` (+ ZIP Pro si lo aportaste)\n")
+            notes.push_str(
+                "5. `wp theme install hello-elementor --activate`\n\
+                 6. `wp plugin install elementor --activate` (+ ZIP Pro si lo aportaste)\n\
+                 7. Página **Home** como portada (`show_on_front=page`) editable con Elementor\n",
+            )
         }
         Editor::GeneratePress => {
             notes.push_str(

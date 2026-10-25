@@ -338,6 +338,107 @@ fn premium_zip_filename(site: &Site) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// Crea (o reutiliza) una página «Home» como portada y la marca editable con Elementor.
+fn ensure_elementor_home_page(app: Option<&AppHandle>, site: &Site) -> Result<(), String> {
+    emit_progress(
+        app,
+        site,
+        "editor",
+        "Configurando página Home editable con Elementor…",
+    );
+
+    let page_id = resolve_or_create_home_page(site)?;
+
+    wpcli_run(
+        &site.path,
+        &["option", "update", "show_on_front", "page"],
+    )?;
+    wpcli_run(
+        &site.path,
+        &["option", "update", "page_on_front", &page_id],
+    )?;
+    // Metadatos mínimos para que «Editar con Elementor» abra el builder.
+    wpcli_run(
+        &site.path,
+        &[
+            "post",
+            "meta",
+            "update",
+            &page_id,
+            "_elementor_edit_mode",
+            "builder",
+        ],
+    )?;
+    wpcli_run(
+        &site.path,
+        &[
+            "post",
+            "meta",
+            "update",
+            &page_id,
+            "_elementor_template_type",
+            "wp-page",
+        ],
+    )?;
+
+    Ok(())
+}
+
+fn resolve_or_create_home_page(site: &Site) -> Result<String, String> {
+    // Reutilizar portada ya configurada (re-provisión idempotente).
+    if let Ok(show) = wpcli_run(&site.path, &["option", "get", "show_on_front"]) {
+        if show.trim() == "page" {
+            if let Ok(front) = wpcli_run(&site.path, &["option", "get", "page_on_front"]) {
+                let id = front.trim();
+                if !id.is_empty() && id != "0" {
+                    if wpcli_run(&site.path, &["post", "get", id, "--field=ID"]).is_ok() {
+                        return Ok(id.to_string());
+                    }
+                }
+            }
+        }
+    }
+
+    // Página existente titulada Home (slug home).
+    if let Ok(found) = wpcli_run(
+        &site.path,
+        &[
+            "post",
+            "list",
+            "--post_type=page",
+            "--name=home",
+            "--field=ID",
+            "--format=csv",
+        ],
+    ) {
+        let id = found
+            .lines()
+            .map(str::trim)
+            .find(|l| !l.is_empty() && *l != "ID")
+            .unwrap_or("");
+        if !id.is_empty() {
+            return Ok(id.to_string());
+        }
+    }
+
+    let created = wpcli_run(
+        &site.path,
+        &[
+            "post",
+            "create",
+            "--post_type=page",
+            "--post_title=Home",
+            "--post_status=publish",
+            "--porcelain",
+        ],
+    )?;
+    let id = created.trim();
+    if id.is_empty() {
+        return Err("No se pudo crear la página Home para Elementor.".to_string());
+    }
+    Ok(id.to_string())
+}
+
 fn install_editor(app: Option<&AppHandle>, site: &Site) -> Result<(), String> {
     match site.editor {
         Editor::Gutenberg => {
@@ -350,6 +451,17 @@ fn install_editor(app: Option<&AppHandle>, site: &Site) -> Result<(), String> {
             Ok(())
         }
         Editor::Elementor => {
+            emit_progress(
+                app,
+                site,
+                "editor",
+                "Instalando tema Hello Elementor…",
+            );
+            // Tema recomendado de Elementor; evita dejar Twenty Twenty-Five como activo.
+            wpcli_run(
+                &site.path,
+                &["theme", "install", "hello-elementor", "--activate"],
+            )?;
             emit_progress(
                 app,
                 site,
@@ -369,6 +481,7 @@ fn install_editor(app: Option<&AppHandle>, site: &Site) -> Result<(), String> {
                 );
                 install_from_premium_zip(site, &name)?;
             }
+            ensure_elementor_home_page(app, site)?;
             Ok(())
         }
         Editor::GeneratePress => {
