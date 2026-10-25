@@ -54,18 +54,27 @@ fn marker_line(domain: &str) -> String {
     format!("{MARKER_PREFIX} {domain}")
 }
 
+/// `true` si `hosts` ya mapea el dominio a una IP (línea no comentada).
+pub fn has_hosts_entry(domain: &str) -> bool {
+    let path = hosts_file_path();
+    let content = match fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    content.lines().any(|l| {
+        let t = l.trim();
+        !t.starts_with('#') && t.split_whitespace().any(|p| p == domain)
+    })
+}
+
 /// Añade `127.0.0.1 dominio.local` al archivo hosts si aún no existe.
 /// En Windows sin elevación devolverá un error en español claro.
 #[tauri::command]
 pub fn add_hosts_entry(domain: String) -> Result<(), String> {
     ensure_valid_local_domain(&domain)?;
     let path = hosts_file_path();
-    let content = fs::read_to_string(&path).unwrap_or_default();
 
-    if content.lines().any(|l| {
-        let t = l.trim();
-        !t.starts_with('#') && t.split_whitespace().any(|p| p == domain)
-    }) {
+    if has_hosts_entry(&domain) {
         return Ok(());
     }
 

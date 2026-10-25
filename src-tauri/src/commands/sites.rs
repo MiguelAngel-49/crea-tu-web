@@ -597,8 +597,8 @@ pub fn get_site_url(id: String) -> Result<String, String> {
         .iter()
         .find(|s| s.id == uuid)
         .ok_or_else(|| "Sitio no encontrado.".to_string())?;
-    // Misma URL que `wp core install` / siteurl (hosts + puerto mapeado).
-    Ok(site.public_url())
+    // URL navegable: `.local` si hosts OK; si no, `127.0.0.1:PUERTO`.
+    Ok(site.browser_url())
 }
 
 #[tauri::command]
@@ -611,6 +611,18 @@ pub fn get_site_admin_url(id: String) -> Result<String, String> {
         .find(|s| s.id == uuid)
         .ok_or_else(|| "Sitio no encontrado.".to_string())?;
     Ok(site.admin_url())
+}
+
+#[tauri::command]
+pub fn get_site_canonical_url(id: String) -> Result<String, String> {
+    let uuid = Uuid::parse_str(&id).map_err(|_| "Identificador de sitio no válido.".to_string())?;
+    let state = load_state()?;
+    let site = state
+        .sites
+        .iter()
+        .find(|s| s.id == uuid)
+        .ok_or_else(|| "Sitio no encontrado.".to_string())?;
+    Ok(site.public_url())
 }
 
 #[tauri::command]

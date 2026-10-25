@@ -213,7 +213,8 @@ fn wait_for_wordpress_files(app: Option<&AppHandle>, site: &Site) -> Result<(), 
 }
 
 fn sync_site_urls(site: &Site) -> Result<(), String> {
-    let url = site.public_url();
+    // Misma base que Abrir sitio: IP si hosts no está escrito (evita redirects a NXDOMAIN).
+    let url = site.browser_url();
     wpcli_run(&site.path, &["option", "update", "siteurl", &url])?;
     wpcli_run(&site.path, &["option", "update", "home", &url])?;
     Ok(())
@@ -227,7 +228,7 @@ fn ensure_core_installed(app: Option<&AppHandle>, site: &Site) -> Result<(), Str
         "Comprobando instalación de WordPress…",
     );
 
-    let url = site.public_url();
+    let url = site.browser_url();
     let already = match wpcli_run(&site.path, &["core", "is-installed"]) {
         Ok(_) => true,
         Err(e) => {

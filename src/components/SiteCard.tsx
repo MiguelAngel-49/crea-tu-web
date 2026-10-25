@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { copySiteCanonicalUrl } from "../api/sites";
 import type { Site } from "../types";
 
 const PLATFORM_LABEL: Record<Site["platform"], string> = {
@@ -47,9 +49,14 @@ export function SiteCard({
   onProvision,
   onDelete,
 }: Props) {
+  const [copyHint, setCopyHint] = useState<string | null>(null);
   const running = site.status === "running";
   const provisioning = site.status === "provisioning" || busy;
   const needsProvision = !site.provisioned;
+  const canonicalUrl =
+    site.httpPort === 80
+      ? `http://${site.domain}`
+      : `http://${site.domain}:${site.httpPort}`;
 
   return (
     <article className="site-card">
@@ -57,10 +64,36 @@ export function SiteCard({
         <div>
           <h2>{site.name}</h2>
           <p className="site-domain">
-            {site.httpPort === 80
-              ? `http://${site.domain}`
-              : `http://${site.domain}:${site.httpPort}`}
+            <span>{canonicalUrl}</span>
+            <button
+              type="button"
+              className="btn-copy-url"
+              title="Copiar URL canónica .local"
+              onClick={() => {
+                void (async () => {
+                  try {
+                    await copySiteCanonicalUrl(site.id);
+                    setCopyHint("URL .local copiada");
+                  } catch {
+                    try {
+                      await navigator.clipboard.writeText(canonicalUrl);
+                      setCopyHint("URL .local copiada");
+                    } catch {
+                      setCopyHint("No se pudo copiar");
+                    }
+                  }
+                  window.setTimeout(() => setCopyHint(null), 2000);
+                })();
+              }}
+            >
+              Copiar
+            </button>
           </p>
+          {copyHint ? (
+            <p className="site-copy-hint" role="status">
+              {copyHint}
+            </p>
+          ) : null}
         </div>
         <span className={`status status-${site.status}`}>
           {STATUS_LABEL[site.status]}

@@ -278,6 +278,33 @@ code,
   color: var(--ink-soft);
   font-family: "IBM Plex Mono", monospace;
   font-size: 0.85rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.btn-copy-url {
+  font: inherit;
+  font-size: 0.75rem;
+  font-family: "Sora", sans-serif;
+  padding: 0.15rem 0.45rem;
+  border-radius: 4px;
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink-soft);
+  cursor: pointer;
+}
+
+.btn-copy-url:hover {
+  border-color: var(--ink-soft);
+  color: var(--ink);
+}
+
+.site-copy-hint {
+  margin: 0.15rem 0 0;
+  font-size: 0.75rem;
+  color: var(--ok-ink);
 }
 
 .status {

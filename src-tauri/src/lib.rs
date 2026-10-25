@@ -20,6 +20,7 @@ pub fn run() {
             sites::stop_site,
             sites::delete_site,
             sites::get_site_url,
+            sites::get_site_canonical_url,
             sites::get_site_admin_url,
             sites::get_data_paths,
         ])
