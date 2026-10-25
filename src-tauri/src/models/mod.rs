@@ -61,8 +61,8 @@ pub struct Site {
 }
 
 impl Site {
-    /// URL pública del sitio: `http://dominio.local` o `http://dominio.local:PUERTO`.
-    /// Incluye el puerto HTTP mapeado (p. ej. 8080) para que, con hosts escrito,
+    /// URL canónica del producto: `http://dominio.local` o con puerto mapeado.
+    /// Incluye el puerto HTTP (p. ej. 8080) para que, con hosts escrito,
     /// el navegador llegue a Nginx sin depender del puerto 80 del host (problemático en Windows).
     pub fn public_url(&self) -> String {
         if self.http_port == 80 {
@@ -72,8 +72,22 @@ impl Site {
         }
     }
 
+    /// URL que debe abrir el navegador ahora.
+    /// Si `hosts` no tiene el dominio (p. ej. UAC en Windows), usa `127.0.0.1:PUERTO`
+    /// para evitar DNS_PROBE_FINISHED_NXDOMAIN; la canónica `.local` sigue en `public_url`.
+    pub fn browser_url(&self) -> String {
+        if crate::commands::hosts::has_hosts_entry(&self.domain) {
+            return self.public_url();
+        }
+        if self.http_port == 80 {
+            "http://127.0.0.1".to_string()
+        } else {
+            format!("http://127.0.0.1:{}", self.http_port)
+        }
+    }
+
     pub fn admin_url(&self) -> String {
-        format!("{}/wp-admin", self.public_url())
+        format!("{}/wp-admin", self.browser_url())
     }
 }
 

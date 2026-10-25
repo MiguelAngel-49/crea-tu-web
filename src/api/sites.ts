@@ -48,6 +48,11 @@ export async function getSiteAdminUrl(id: string): Promise<string> {
   return invoke("get_site_admin_url", { id });
 }
 
+/** URL canónica `*.local` (para mostrar/copiar), aunque Abrir sitio use 127.0.0.1. */
+export async function getSiteCanonicalUrl(id: string): Promise<string> {
+  return invoke("get_site_canonical_url", { id });
+}
+
 export async function getHostsInfo(): Promise<HostsInfo> {
   return invoke("get_hosts_info");
 }
@@ -60,6 +65,12 @@ export async function openSiteInBrowser(id: string): Promise<void> {
 export async function openWpAdmin(id: string): Promise<void> {
   const url = await getSiteAdminUrl(id);
   await openUrl(url);
+}
+
+export async function copySiteCanonicalUrl(id: string): Promise<string> {
+  const url = await getSiteCanonicalUrl(id);
+  await navigator.clipboard.writeText(url);
+  return url;
 }
 
 export async function onProvisionProgress(
