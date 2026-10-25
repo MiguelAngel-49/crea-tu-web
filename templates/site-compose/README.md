@@ -29,7 +29,7 @@ hosts escrito el navegador llegue al contenedor sin ocupar el puerto 80 del host
 
 Tras `docker compose up -d`, la app ejecuta WP-CLI vía `docker compose run --rm wpcli …`:
 
-1. `wp db check` (espera MySQL)
+1. `wp db query "SELECT 1"` (espera MySQL; no usa `db check`/mariadb-check TLS)
 2. `wp core install --url=http://dominio.local:PUERTO …`
 3. Plataforma (p. ej. WooCommerce) y editor (Elementor latest / GeneratePress / Divi desde ZIP)
 

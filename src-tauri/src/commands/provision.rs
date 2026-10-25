@@ -93,6 +93,9 @@ pub fn wpcli_run(site_path: &str, args: &[&str]) -> Result<String, String> {
     Ok(if stdout.is_empty() { stderr } else { stdout })
 }
 
+/// Espera a MySQL sin usar `wp db check` (invoca `mariadb-check` y en Docker
+/// Desktop / Windows falla con TLS «self-signed certificate in certificate chain»).
+/// Usamos `wp db query "SELECT 1"` vía mysqli de WordPress, que no pasa por ese cliente.
 fn wait_for_db(app: Option<&AppHandle>, site: &Site) -> Result<(), String> {
     emit_progress(
         app,
@@ -104,10 +107,27 @@ fn wait_for_db(app: Option<&AppHandle>, site: &Site) -> Result<(), String> {
     let mut last_err = String::from("tiempo de espera agotado");
 
     while Instant::now() < deadline {
-        match wpcli_run(&site.path, &["db", "check"]) {
+        match wpcli_run(
+            &site.path,
+            &[
+                "db",
+                "query",
+                "SELECT 1;",
+                "--skip-column-names",
+                "--quiet",
+            ],
+        ) {
             Ok(_) => return Ok(()),
             Err(e) => {
-                last_err = e;
+                // Si apareciera un falso negativo TLS de mariadb-check en otro comando, reintentar
+                let lower = e.to_lowercase();
+                if lower.contains("self-signed certificate") || lower.contains("tls/ssl error") {
+                    last_err = format!(
+                        "Cliente MySQL/TLS conflictivo (se reintenta con consulta WP): {e}"
+                    );
+                } else {
+                    last_err = e;
+                }
                 thread::sleep(POLL);
             }
         }

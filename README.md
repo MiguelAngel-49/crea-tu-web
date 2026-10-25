@@ -65,7 +65,7 @@ npm run tauri build
 2. Copiar plantilla Compose, escribir `.env`, copiar ZIP premium si aplica.
 3. Intentar entrada en el archivo **hosts** (UAC en Windows 11).
 4. `docker compose up -d`.
-5. WP-CLI: esperar MySQL → `wp core install` → WooCommerce / Elementor (latest) / GeneratePress / Divi (ZIP).
+5. WP-CLI: esperar MySQL con `wp db query "SELECT 1"` (no `db check`, que falla por TLS/self-signed en Docker Desktop) → `wp core install` → WooCommerce / Elementor (latest) / GeneratePress / Divi (ZIP).
 6. La UI muestra el progreso (`provision-progress`) y el estado «Provisionando…».
 
 **URL local (Windows-friendly):** Nginx publica un puerto alto (p. ej. **8080**). WordPress `siteurl`/`home` y «Abrir sitio» usan `http://nombre.local:8080` (no el :80 implícito), así el navegador llega al contenedor tras escribir hosts sin ocupar el puerto 80 del sistema.
