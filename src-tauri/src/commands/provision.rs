@@ -1,4 +1,4 @@
-use crate::commands::docker::{compose_in_dir, ensure_docker};
+use crate::commands::docker::{compose_in_dir, ensure_docker, hide_console_window};
 use crate::models::{Editor, Platform, ProvisionProgress, Site};
 use std::path::Path;
 use std::process::Command;
@@ -62,6 +62,7 @@ fn map_wp_error(detail: &str) -> String {
 pub fn wpcli_run(site_path: &str, args: &[&str]) -> Result<String, String> {
     ensure_docker()?;
     let mut cmd = Command::new("docker");
+    hide_console_window(&mut cmd);
     cmd.arg("compose")
         .arg("run")
         .arg("--rm")
@@ -180,6 +181,35 @@ fn wait_for_db(app: Option<&AppHandle>, site: &Site) -> Result<(), String> {
     ))
 }
 
+/// Señales de que el núcleo WP ya está en el volumen (aunque `is-installed` falle).
+///
+/// WP-CLI en CLI sin `HTTP_HOST` emite avisos PHP desde `functions.php`; eso
+/// implica que los archivos del núcleo ya existen. Compose progress en stderr
+/// no cuenta.
+fn is_wordpress_files_ready_signal(msg: &str) -> bool {
+    let lower = strip_compose_progress(msg).to_lowercase();
+    if lower.trim().is_empty() {
+        return false;
+    }
+    lower.contains("not installed")
+        || lower.contains("does not seem to be installed")
+        || lower.contains("http_host")
+        || lower.contains("undefined array key")
+        || lower.contains("undefined index")
+        || (lower.contains("php warning") && lower.contains("functions.php"))
+        || (lower.contains("warning:") && lower.contains("functions.php"))
+}
+
+/// True when the volume still looks empty / entrypoint still copying core files.
+fn is_wordpress_files_missing(msg: &str) -> bool {
+    let lower = strip_compose_progress(msg).to_lowercase();
+    lower.contains("does not seem to be a wordpress installation")
+        || lower.contains("no wordpress installation")
+        || (lower.contains("wp-config.php") && lower.contains("not found"))
+        || lower.contains("error establishing a database connection")
+        || is_db_connection_error(msg)
+}
+
 fn wait_for_wordpress_files(app: Option<&AppHandle>, site: &Site) -> Result<(), String> {
     emit_progress(
         app,
@@ -195,12 +225,20 @@ fn wait_for_wordpress_files(app: Option<&AppHandle>, site: &Site) -> Result<(), 
             // Exit 0 = ya instalado (archivos + tablas OK)
             Ok(_) => return Ok(()),
             Err(e) => {
-                let lower = e.to_lowercase();
-                // Archivos presentes, pendiente de core install
-                if lower.contains("not installed") {
+                // Archivos presentes (not installed / HTTP_HOST / PHP Warning)
+                if is_wordpress_files_ready_signal(&e) {
                     return Ok(());
                 }
-                // Volumen aún vacío / entrypoint copiando → seguir esperando
+                // Volumen aún vacío / entrypoint copiando / DB no lista → seguir
+                if is_wordpress_files_missing(&e) || is_db_connection_error(&e) {
+                    last_err = e;
+                    thread::sleep(POLL);
+                    continue;
+                }
+                // Otros fallos no-conexión con ruido Compose ya filtrado: núcleo usable
+                if !strip_compose_progress(&e).trim().is_empty() {
+                    return Ok(());
+                }
                 last_err = e;
                 thread::sleep(POLL);
             }
@@ -298,11 +336,41 @@ fn install_platform(app: Option<&AppHandle>, site: &Site) -> Result<(), String> 
                 "platform",
                 "Instalando y activando WooCommerce…",
             );
-            wpcli_run(
+            // Latest WooCommerce may require WP ≥ 7.0; our image is 6.8.x.
+            // Try latest first, then a known-good 6.8-compatible release.
+            match wpcli_run(
                 &site.path,
                 &["plugin", "install", "woocommerce", "--activate"],
-            )?;
-            Ok(())
+            ) {
+                Ok(_) => Ok(()),
+                Err(e) => {
+                    let lower = e.to_lowercase();
+                    if lower.contains("minimum wordpress")
+                        || lower.contains("does not work with your version")
+                        || lower.contains("no plugins installed")
+                    {
+                        emit_progress(
+                            app,
+                            site,
+                            "platform",
+                            "WooCommerce latest exige WP más nuevo; instalando 9.8.5 (compatible con 6.8)…",
+                        );
+                        wpcli_run(
+                            &site.path,
+                            &[
+                                "plugin",
+                                "install",
+                                "woocommerce",
+                                "--version=9.8.5",
+                                "--activate",
+                            ],
+                        )?;
+                        Ok(())
+                    } else {
+                        Err(e)
+                    }
+                }
+            }
         }
     }
 }
@@ -447,7 +515,10 @@ pub fn provision_site(app: Option<&AppHandle>, site: &Site) -> Result<(), String
 
 #[cfg(test)]
 mod tests {
-    use super::{is_db_connection_error, strip_compose_progress};
+    use super::{
+        is_db_connection_error, is_wordpress_files_missing, is_wordpress_files_ready_signal,
+        strip_compose_progress,
+    };
 
     #[test]
     fn strip_compose_keeps_http_host_notice() {
@@ -489,5 +560,33 @@ Notice: Undefined index: HTTP_HOST in phar:///usr/local/bin/wp/vendor/wp-cli/wp-
         assert!(is_db_connection_error(
             "WordPress aún no puede conectar con MySQL. Detalle: …"
         ));
+    }
+
+    #[test]
+    fn http_host_warning_means_wordpress_files_ready() {
+        let raw = "\
+Error de WP-CLI: Container ctw-vedemos-oro-de-inversion-mysql Running \n\
+ Container ctw-vedemos-oro-de-inversion-wordpress Running \n\
+ Container ctw-vedemos-oro-de-inversion-mysql Waiting \n\
+ Container ctw-vedemos-oro-de-inversion-mysql Healthy \n\
+ Container crea-tu-web-vedemos-oro-de-inversion-wpcli-run-896f278ee38a Creating \n\
+ Container crea-tu-web-vedemos-oro-de-inversion-wpcli-run-896f278ee38a Created \n\
+[25-Oct-2026 12:04:24 UTC] PHP Warning:  Undefined array key \"HTTP_HOST\" in /var/www/html/wp-includes/functions.php on line 6334\n\
+Warning: Undefined array key \"HTTP_HOST\" in /var/www/html/wp-includes/functions.php on line 6334";
+        assert!(
+            is_wordpress_files_ready_signal(raw),
+            "HTTP_HOST from functions.php must count as files ready"
+        );
+        assert!(
+            !is_wordpress_files_missing(raw),
+            "must not keep waiting forever on HTTP_HOST"
+        );
+    }
+
+    #[test]
+    fn empty_volume_still_missing() {
+        let raw = "Error: This does not seem to be a WordPress installation. Pass --path=`path/to/wordpress` or run `wp core download`.";
+        assert!(is_wordpress_files_missing(raw));
+        assert!(!is_wordpress_files_ready_signal(raw));
     }
 }
