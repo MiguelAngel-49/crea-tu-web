@@ -1,8 +1,25 @@
 use crate::models::DockerStatus;
 use std::process::Command;
 
+/// CREATE_NO_WINDOW — evita que `docker.exe` abra consolas CMD parpadeantes en Windows.
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+
+/// Aplica flags para que el hijo no muestre ventana de consola (Windows).
+/// En otros SO no hace nada. Usar en **todo** spawn de Docker / Compose / WP-CLI.
+#[allow(unused_variables)]
+pub fn hide_console_window(cmd: &mut Command) {
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(CREATE_NO_WINDOW);
+    }
+}
+
 fn run_capture(program: &str, args: &[&str]) -> Result<String, String> {
-    let output = Command::new(program)
+    let mut cmd = Command::new(program);
+    hide_console_window(&mut cmd);
+    let output = cmd
         .args(args)
         .output()
         .map_err(|e| match e.kind() {
@@ -100,7 +117,9 @@ pub fn compose_in_dir(site_path: &str, args: &[&str]) -> Result<String, String> 
     ensure_docker()?;
     let mut full = vec!["compose"];
     full.extend_from_slice(args);
-    let output = Command::new("docker")
+    let mut cmd = Command::new("docker");
+    hide_console_window(&mut cmd);
+    let output = cmd
         .args(&full)
         .current_dir(site_path)
         .output()
@@ -121,7 +140,9 @@ pub fn compose_in_dir(site_path: &str, args: &[&str]) -> Result<String, String> 
 /// Consulta si el compose del sitio tiene contenedores en ejecución.
 pub fn site_is_running(site_path: &str) -> Result<bool, String> {
     ensure_docker()?;
-    let output = Command::new("docker")
+    let mut cmd = Command::new("docker");
+    hide_console_window(&mut cmd);
+    let output = cmd
         .args(["compose", "ps", "-q", "--status", "running"])
         .current_dir(site_path)
         .output()
