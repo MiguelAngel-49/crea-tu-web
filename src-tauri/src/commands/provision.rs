@@ -93,10 +93,37 @@ pub fn wpcli_run(site_path: &str, args: &[&str]) -> Result<String, String> {
     Ok(if stdout.is_empty() { stderr } else { stdout })
 }
 
+/// True when the WP-CLI error still looks like MySQL/mysqli is unreachable.
+fn is_db_connection_error(msg: &str) -> bool {
+    let lower = msg.to_lowercase();
+    lower.contains("error establishing a database connection")
+        || lower.contains("aún no puede conectar con mysql")
+        || lower.contains("access denied")
+        || lower.contains("unknown database")
+        || lower.contains("can't connect")
+        || lower.contains("could not connect")
+        || lower.contains("connection refused")
+        || lower.contains("mysqli")
+        || lower.contains("mysql")
+        || lower.contains("mariadb")
+        || lower.contains("tls/ssl")
+        || lower.contains("self-signed certificate")
+        || lower.contains("php_network_getaddresses")
+        || lower.contains("getaddrinfo")
+        || lower.contains("no such host")
+        || lower.contains("name or service not known")
+        || lower.contains("timed out")
+        || lower.contains("timeout")
+}
+
 /// Espera a MySQL vía mysqli de WordPress (`wp core is-installed`).
 /// No usar `wp db query` / `wp db check`: en Docker Desktop Windows el cliente
 /// mysql/mariadb falla con TLS «self-signed certificate in certificate chain»
 /// aunque MySQL esté sano y PHP/mysqli conecte bien.
+///
+/// Exit ≠ 0 sin errores de conexión también cuenta como listo: en sitios aún no
+/// instalados WP-CLI a veces solo emite avisos (p. ej. `HTTP_HOST`) sin el texto
+/// «not installed».
 fn wait_for_db(app: Option<&AppHandle>, site: &Site) -> Result<(), String> {
     emit_progress(
         app,
@@ -113,9 +140,11 @@ fn wait_for_db(app: Option<&AppHandle>, site: &Site) -> Result<(), String> {
             Ok(_) => return Ok(()),
             Err(e) => {
                 let lower = e.to_lowercase();
-                // DB up; WP just not installed yet — ready for provisioning
+                // Explicit "not installed" — DB up, WP pending
                 if lower.contains("not installed")
                     || lower.contains("does not seem to be installed")
+                    // Other non-connection failures (e.g. HTTP_HOST notice) — DB reachable
+                    || !is_db_connection_error(&e)
                 {
                     return Ok(());
                 }
