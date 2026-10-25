@@ -212,7 +212,9 @@ fn wait_for_wordpress_files(app: Option<&AppHandle>, site: &Site) -> Result<(), 
     ))
 }
 
-fn sync_site_urls(site: &Site) -> Result<(), String> {
+/// Alinea `siteurl`/`home` con la URL navegable (incl. `127.0.0.1:PUERTO`).
+/// Sin el puerto, WP redirige Admin a `:80` → ERR_CONNECTION_REFUSED.
+pub fn sync_site_urls(site: &Site) -> Result<(), String> {
     // Misma base que Abrir sitio: IP si hosts no está escrito (evita redirects a NXDOMAIN).
     let url = site.browser_url();
     wpcli_run(&site.path, &["option", "update", "siteurl", &url])?;

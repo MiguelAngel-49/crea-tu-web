@@ -61,33 +61,73 @@ pub struct Site {
 }
 
 impl Site {
+    /// Origen HTTP con puerto mapeado (omite `:80`). Nunca elimina un puerto ≠ 80.
+    pub fn http_origin(host: &str, http_port: u16) -> String {
+        if http_port == 80 {
+            format!("http://{host}")
+        } else {
+            format!("http://{host}:{http_port}")
+        }
+    }
+
     /// URL canónica del producto: `http://dominio.local` o con puerto mapeado.
     /// Incluye el puerto HTTP (p. ej. 8080) para que, con hosts escrito,
     /// el navegador llegue a Nginx sin depender del puerto 80 del host (problemático en Windows).
     pub fn public_url(&self) -> String {
-        if self.http_port == 80 {
-            format!("http://{}", self.domain)
-        } else {
-            format!("http://{}:{}", self.domain, self.http_port)
-        }
+        Self::http_origin(&self.domain, self.http_port)
     }
 
     /// URL que debe abrir el navegador ahora.
     /// Si `hosts` no tiene el dominio (p. ej. UAC en Windows), usa `127.0.0.1:PUERTO`
-    /// para evitar DNS_PROBE_FINISHED_NXDOMAIN; la canónica `.local` sigue en `public_url`.
+    /// (el puerto mapeado se conserva; sin él WP redirige a `:80` → ERR_CONNECTION_REFUSED).
+    /// La canónica `.local` sigue en `public_url`.
     pub fn browser_url(&self) -> String {
         if crate::commands::hosts::has_hosts_entry(&self.domain) {
             return self.public_url();
         }
-        if self.http_port == 80 {
-            "http://127.0.0.1".to_string()
-        } else {
-            format!("http://127.0.0.1:{}", self.http_port)
-        }
+        Self::http_origin("127.0.0.1", self.http_port)
     }
 
+    /// WP Admin sobre la misma base que Abrir sitio (IP+puerto si hosts falla).
     pub fn admin_url(&self) -> String {
-        format!("{}/wp-admin", self.browser_url())
+        format!("{}/wp-admin/", self.browser_url())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::Site;
+
+    #[test]
+    fn http_origin_keeps_non_default_port() {
+        assert_eq!(
+            Site::http_origin("127.0.0.1", 8083),
+            "http://127.0.0.1:8083"
+        );
+        assert_eq!(
+            Site::http_origin("vedemos-oro-de-inversion.local", 8083),
+            "http://vedemos-oro-de-inversion.local:8083"
+        );
+    }
+
+    #[test]
+    fn http_origin_omits_only_port_80() {
+        assert_eq!(Site::http_origin("127.0.0.1", 80), "http://127.0.0.1");
+        assert_eq!(
+            Site::http_origin("demo.local", 80),
+            "http://demo.local"
+        );
+    }
+
+    #[test]
+    fn admin_path_never_strips_mapped_port_from_origin() {
+        let origin = Site::http_origin("127.0.0.1", 8083);
+        let admin = format!("{origin}/wp-admin/");
+        assert_eq!(admin, "http://127.0.0.1:8083/wp-admin/");
+        assert!(
+            !admin.starts_with("http://127.0.0.1/wp-admin"),
+            "port must not be stripped for IP fallback admin URL"
+        );
     }
 }
 
