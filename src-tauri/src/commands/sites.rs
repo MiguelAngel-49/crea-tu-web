@@ -175,7 +175,9 @@ fn provision_notes(site: &Site) -> String {
 
     notes.push_str("## Pasos automáticos\n\n");
     notes.push_str("1. `docker compose up -d`\n");
-    notes.push_str("2. Esperar MySQL (`wp db query \"SELECT 1\"` — evita `db check`/TLS)\n");
+    notes.push_str(
+        "2. Esperar MySQL (`wp core is-installed` vía mysqli — evita cliente mysql/TLS)\n",
+    );
     notes.push_str(&format!(
         "3. `wp core install --url={public}` (incluye puerto HTTP mapeado si ≠ 80)\n"
     ));
@@ -206,7 +208,7 @@ fn provision_notes(site: &Site) -> String {
 
     notes.push_str("\n## Reintento manual\n\n");
     notes.push_str("```bash\ncd <ruta-del-sitio>\ndocker compose up -d\n");
-    notes.push_str("docker compose run --rm wpcli db query \"SELECT 1;\" --skip-column-names\n");
+    notes.push_str("docker compose run --rm wpcli core is-installed || true\n");
     notes.push_str(&format!(
         "docker compose run --rm wpcli core install \\\n  --url={public} --title=\"{}\" \\\n  --admin_user={} --admin_password=*** --admin_email=admin@{} --skip-email\n```\n",
         site.name, site.admin_user, site.domain

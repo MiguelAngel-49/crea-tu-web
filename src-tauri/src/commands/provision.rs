@@ -93,9 +93,10 @@ pub fn wpcli_run(site_path: &str, args: &[&str]) -> Result<String, String> {
     Ok(if stdout.is_empty() { stderr } else { stdout })
 }
 
-/// Espera a MySQL sin usar `wp db check` (invoca `mariadb-check` y en Docker
-/// Desktop / Windows falla con TLS «self-signed certificate in certificate chain»).
-/// Usamos `wp db query "SELECT 1"` vía mysqli de WordPress, que no pasa por ese cliente.
+/// Espera a MySQL vía mysqli de WordPress (`wp core is-installed`).
+/// No usar `wp db query` / `wp db check`: en Docker Desktop Windows el cliente
+/// mysql/mariadb falla con TLS «self-signed certificate in certificate chain»
+/// aunque MySQL esté sano y PHP/mysqli conecte bien.
 fn wait_for_db(app: Option<&AppHandle>, site: &Site) -> Result<(), String> {
     emit_progress(
         app,
@@ -107,27 +108,18 @@ fn wait_for_db(app: Option<&AppHandle>, site: &Site) -> Result<(), String> {
     let mut last_err = String::from("tiempo de espera agotado");
 
     while Instant::now() < deadline {
-        match wpcli_run(
-            &site.path,
-            &[
-                "db",
-                "query",
-                "SELECT 1;",
-                "--skip-column-names",
-                "--quiet",
-            ],
-        ) {
+        match wpcli_run(&site.path, &["core", "is-installed"]) {
+            // Exit 0 = DB up and WP already installed
             Ok(_) => return Ok(()),
             Err(e) => {
-                // Si apareciera un falso negativo TLS de mariadb-check en otro comando, reintentar
                 let lower = e.to_lowercase();
-                if lower.contains("self-signed certificate") || lower.contains("tls/ssl error") {
-                    last_err = format!(
-                        "Cliente MySQL/TLS conflictivo (se reintenta con consulta WP): {e}"
-                    );
-                } else {
-                    last_err = e;
+                // DB up; WP just not installed yet — ready for provisioning
+                if lower.contains("not installed")
+                    || lower.contains("does not seem to be installed")
+                {
+                    return Ok(());
                 }
+                last_err = e;
                 thread::sleep(POLL);
             }
         }
