@@ -1,0 +1,94 @@
+# Plantilla Crea-tu-Web — WordPress + Nginx + PHP-FPM + MySQL + WP-CLI
+# Placeholders sustituidos al crear el sitio: {{SITE_SLUG}}, {{DOMAIN}}, {{HTTP_PORT}}, {{MYSQL_PORT}}
+name: crea-tu-web-{{SITE_SLUG}}
+
+services:
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: ctw-{{SITE_SLUG}}-nginx
+    ports:
+      - "{{HTTP_PORT}}:80"
+    volumes:
+      - wordpress:/var/www/html:ro
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      wordpress:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - ctw
+
+  wordpress:
+    # ≥ 6.8: Elementor (latest) exige WordPress 6.8+
+    image: wordpress:6.8-php8.2-fpm
+    container_name: ctw-{{SITE_SLUG}}-wordpress
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: wordpress
+      WORDPRESS_DB_NAME: wordpress
+    volumes:
+      - wordpress:/var/www/html
+      - ./premium:/premium:ro
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - ctw
+
+  db:
+    image: mysql:8.4
+    container_name: ctw-{{SITE_SLUG}}-mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
+    environment:
+      MYSQL_DATABASE: wordpress
+      MYSQL_USER: wordpress
+      MYSQL_PASSWORD: wordpress
+      MYSQL_ROOT_PASSWORD: rootpass
+    ports:
+      - "{{MYSQL_PORT}}:3306"
+    volumes:
+      - db_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-uroot", "-prootpass"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+      start_period: 15s
+    restart: unless-stopped
+    networks:
+      - ctw
+
+  # Solo vía `docker compose run --rm wpcli …` (perfil tools: no arranca con up -d).
+  wpcli:
+    image: wordpress:cli-php8.2
+    container_name: ctw-{{SITE_SLUG}}-wpcli
+    environment:
+      WORDPRESS_DB_HOST: db
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD: wordpress
+      WORDPRESS_DB_NAME: wordpress
+    volumes:
+      - wordpress:/var/www/html
+      - ./premium:/premium:ro
+    depends_on:
+      db:
+        condition: service_healthy
+      wordpress:
+        condition: service_started
+    networks:
+      - ctw
+    profiles:
+      - tools
+    user: "33:33"
+    entrypoint: ["wp"]
+    command: ["--info"]
+
+volumes:
+  wordpress:
+  db_data:
+
+networks:
+  ctw:
+    name: ctw-{{SITE_SLUG}}-net
