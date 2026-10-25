@@ -507,8 +507,16 @@ pub fn start_site(app: AppHandle, id: String) -> Result<Site, String> {
 
     site.status = SiteStatus::Starting;
     let path = site.path.clone();
+    let snapshot = site.clone();
     match compose_in_dir(&path, &["up", "-d"]) {
         Ok(_) => {
+            // Re-sync siteurl/home so WP Admin keeps the mapped port (IP fallback).
+            if let Err(e) = provision::sync_site_urls(&snapshot) {
+                site.status = SiteStatus::Error;
+                site.last_error = Some(e.clone());
+                let _ = save_state(&state);
+                return Err(e);
+            }
             site.status = SiteStatus::Running;
             site.last_error = None;
         }
