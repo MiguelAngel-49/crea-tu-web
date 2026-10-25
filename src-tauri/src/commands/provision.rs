@@ -93,9 +93,31 @@ pub fn wpcli_run(site_path: &str, args: &[&str]) -> Result<String, String> {
     Ok(if stdout.is_empty() { stderr } else { stdout })
 }
 
+/// Drop Docker Compose progress lines (often on stderr of `compose run`).
+/// Those mention service names like `…-mysql` / statuses (`Healthy`, `Started`)
+/// and must not be classified as DB connection failures.
+fn is_compose_progress_line(line: &str) -> bool {
+    let t = line.trim_start().to_lowercase();
+    t.starts_with("container ")
+        || t.starts_with("network ")
+        || t.starts_with("volume ")
+        || t.starts_with("image ")
+        || t.starts_with("service ")
+}
+
+fn strip_compose_progress(msg: &str) -> String {
+    msg.lines()
+        .filter(|line| !is_compose_progress_line(line))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 /// True when the WP-CLI error still looks like MySQL/mysqli is unreachable.
+///
+/// Does **not** treat a bare `"mysql"` / `"mariadb"` substring as enough —
+/// Compose stderr often contains container names like `ctw-*-mysql Healthy`.
 fn is_db_connection_error(msg: &str) -> bool {
-    let lower = msg.to_lowercase();
+    let lower = strip_compose_progress(msg).to_lowercase();
     lower.contains("error establishing a database connection")
         || lower.contains("aún no puede conectar con mysql")
         || lower.contains("access denied")
@@ -104,8 +126,7 @@ fn is_db_connection_error(msg: &str) -> bool {
         || lower.contains("could not connect")
         || lower.contains("connection refused")
         || lower.contains("mysqli")
-        || lower.contains("mysql")
-        || lower.contains("mariadb")
+        || lower.contains("error 2026")
         || lower.contains("tls/ssl")
         || lower.contains("self-signed certificate")
         || lower.contains("php_network_getaddresses")
@@ -421,4 +442,51 @@ pub fn provision_site(app: Option<&AppHandle>, site: &Site) -> Result<(), String
     }
 
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{is_db_connection_error, strip_compose_progress};
+
+    #[test]
+    fn strip_compose_keeps_http_host_notice() {
+        let raw = "\
+ Container ctw-demo-tls-mysql  Healthy \n\
+Notice: Undefined index: HTTP_HOST in phar:///usr/local/bin/wp/vendor/wp-cli/wp-cli/php/WP_CLI/Runner.php on line 1234";
+        let cleaned = strip_compose_progress(raw);
+        assert!(
+            !cleaned.to_lowercase().contains("healthy"),
+            "Compose progress should be removed: {cleaned}"
+        );
+        assert!(
+            cleaned.contains("HTTP_HOST"),
+            "WP-CLI notice must remain: {cleaned}"
+        );
+        assert!(
+            !is_db_connection_error(raw),
+            "HTTP_HOST + Compose mysql Healthy must not look like a DB error"
+        );
+    }
+
+    #[test]
+    fn bare_mysql_in_container_name_is_not_connection_error() {
+        let raw = "Error de WP-CLI:  Container ctw-foo-mysql  Started \n Container ctw-foo-wordpress  Started ";
+        assert!(!is_db_connection_error(raw));
+    }
+
+    #[test]
+    fn real_mysqli_and_tls_errors_still_match() {
+        assert!(is_db_connection_error(
+            "Error establishing a database connection"
+        ));
+        assert!(is_db_connection_error(
+            "mysqli_real_connect(): (HY000/2002): Connection refused"
+        ));
+        assert!(is_db_connection_error(
+            "ERROR 2026 (HY000): TLS/SSL error: self-signed certificate in certificate chain"
+        ));
+        assert!(is_db_connection_error(
+            "WordPress aún no puede conectar con MySQL. Detalle: …"
+        ));
+    }
 }
